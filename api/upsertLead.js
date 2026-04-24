@@ -7,26 +7,35 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
   try {
+    console.log("BODY:", req.body);
+
     const { phone, name, intent, score, last_message } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ error: "Phone requerido" });
+    }
 
     const { data, error } = await supabase
       .from("leads")
-      .upsert([
+      .insert([
         { phone, name, intent, score, last_message }
-      ]);
+      ])
+      .select();
 
-    if (error) throw error;
+    if (error) {
+      console.error("SUPABASE ERROR:", error);
+      return res.status(500).json({ error: error.message });
+    }
 
     return res.status(200).json({
       success: true,
       data
     });
 
-  } catch (error) {
-    console.error(error);
-
+  } catch (err) {
+    console.error("SERVER ERROR:", err);
     return res.status(500).json({
-      error: error.message
+      error: err.message
     });
   }
 }
