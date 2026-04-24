@@ -1,5 +1,3 @@
-console.log("KEY START:", process.env.SUPABASE_KEY?.slice(0, 20));
-
 import { createClient } from "@supabase/supabase-js";
 
 export default async function handler(req, res) {
