@@ -7,11 +7,21 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({
+      ok: false,
+      error: "Method not allowed"
+    });
   }
 
   try {
-    const { event } = req.body;
+    const { event } = req.body || {};
+
+    if (!event) {
+      return res.status(400).json({
+        ok: false,
+        error: "event is required"
+      });
+    }
 
     const { data, error } = await supabase
       .from("metrics")
