@@ -15,12 +15,21 @@ export default async function handler(req, res) {
 
     const { data, error } = await supabase
       .from("metrics")
-      .insert([{ event }]);
+      .insert([{ event }])
+      .select();
 
     if (error) throw error;
 
-    return res.status(200).json({ ok: true, data });
+    return res.status(200).json({
+      ok: true,
+      message: "Métrica guardada",
+      data
+    });
+
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({
+      ok: false,
+      error: err.message
+    });
   }
 }
