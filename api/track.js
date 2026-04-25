@@ -16,23 +16,15 @@ export default async function handler(req, res) {
   try {
     const { event } = req.body || {};
 
-    if (!event) {
-      return res.status(400).json({
-        ok: false,
-        error: "event is required"
-      });
-    }
-
     const { data, error } = await supabase
       .from("metrics")
-      .insert([{ event }])
+      .insert([{ event: event || "test" }])
       .select();
 
     if (error) throw error;
 
     return res.status(200).json({
       ok: true,
-      message: "Métrica guardada",
       data
     });
 
