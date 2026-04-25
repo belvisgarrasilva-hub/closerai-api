@@ -1,55 +1,56 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-)
-
 export default async function handler(req, res) {
-  // Validar método
+  // 🔹 Test rápido para saber si el deploy está activo
+  if (req.method === 'GET') {
+    return res.status(200).json({
+      status: 'API funcionando',
+      hasEnv: {
+        url: !!process.env.SUPABASE_URL,
+        key: !!process.env.SUPABASE_ANON_KEY
+      }
+    });
+  }
+
+  // 🔹 Validar método POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    // Asegurar que el body esté bien parseado
+    // 🔹 Validar variables de entorno
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+      return res.status(500).json({
+        error: 'Faltan variables de entorno',
+        details: {
+          SUPABASE_URL: !!process.env.SUPABASE_URL,
+          SUPABASE_ANON_KEY: !!process.env.SUPABASE_ANON_KEY
+        }
+      });
+    }
+
+    // 🔹 Crear cliente Supabase dentro del handler (más seguro en serverless)
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_ANON_KEY
+    );
+
+    // 🔹 Parsear body correctamente
     const body = typeof req.body === 'string'
       ? JSON.parse(req.body)
       : req.body;
 
     const { original, suggestion } = body;
 
-    // Validación de datos
+    // 🔹 Validación
     if (!original || !suggestion) {
-      return res.status(400).json({ error: 'Faltan datos: original y suggestion son requeridos' });
+      return res.status(400).json({
+        error: 'Faltan datos',
+        received: body
+      });
     }
 
-    const testId = crypto.randomUUID();
+    // 🔹 Generar datos
+    const testId = Date.now().toString(); // más compatible que crypto.randomUUID()
     const variant = Math.random() > 0.5 ? "A" : "B";
-    const message = variant === "A" ? original : suggestion;
-
-    // Insertar en Supabase
-    const { error } = await supabase.from('ab_tests').insert({
-      test_id: testId,
-      variant,
-      original,
-      suggestion
-    });
-
-    if (error) {
-      console.error('Supabase error:', error);
-      return res.status(500).json({ error: 'Error guardando en base de datos' });
-    }
-
-    // Respuesta final
-    return res.status(200).json({
-      testId,
-      variant,
-      message
-    });
-
-  } catch (err) {
-    console.error('Server error:', err);
-    return res.status(500).json({ error: 'Error interno del servidor' });
-  }
-}
+    const message = variant === "A" ? original
