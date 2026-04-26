@@ -2,6 +2,12 @@ import { getAIAnalysis } from "../lib/openai.js";
 import { scoreLead } from "../lib/scoring.js";
 import { createClient } from "@supabase/supabase-js";
 
+// 🔥 CLIENTE GLOBAL (mejor performance en Vercel)
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") {
@@ -20,13 +26,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Falta mensaje" });
     }
 
-    // 🔹 Supabase
-    const supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_ANON_KEY
-    );
-
-    // 🔹 IA
+    // 🔹 IA / fallback
     const ai = await getAIAnalysis({
       message: "",
       customerMessage,
@@ -37,56 +37,65 @@ export default async function handler(req, res) {
     // 🔹 Score
     const score = scoreLead(ai.intent, ai.urgency);
 
-    // 🔹 Conversión
+    // 🔥 NUEVO: STAGE (embudo de ventas)
+    const stage = ai.stage || "NEW";
+
+    // 🔹 Conversión real
     const converted = ["compro", "quiero", "dale", "ok", "listo"]
       .some(k => customerMessage.toLowerCase().includes(k));
 
-    // 🔹 Upsert lead (sin duplicados)
+    const timestamp = new Date().toISOString();
+
+    // 🔹 Upsert lead (CRM base)
     if (phone) {
-      await supabase
-        .from("leads")
-        .upsert([
-          {
-            phone,
-            name: name || "Sin nombre",
-            intent: ai.intent,
-            score,
-            last_message: customerMessage,
-            businessType
-          }
-        ], { onConflict: "phone" });
+      await supabase.from("leads").upsert([
+        {
+          phone,
+          name: name || "Sin nombre",
+          intent: ai.intent,
+          score,
+          last_message: customerMessage,
+          businessType,
+          updated_at: timestamp
+        }
+      ], { onConflict: "phone" });
     }
 
-    // 🔹 Log mensaje
+    // 🔹 Log mensaje (FUNDAMENTAL PARA DASHBOARD)
     await supabase.from("messages").insert([
       {
         phone: phone || "unknown",
         message: customerMessage,
         reply: ai.reply,
         intent: ai.intent,
+        stage, // 🔥 NUEVO
         source: ai.source,
         converted,
-        businessType
+        businessType,
+        created_at: timestamp
       }
     ]);
 
-    // 🔹 Métrica
+    // 🔹 Métricas (embudo + ventas)
     await supabase.from("metrics").insert([
       {
-        event: converted ? "conversion" : "message"
+        event: converted ? "conversion" : "message",
+        businessType,
+        created_at: timestamp
       }
     ]);
 
     return res.status(200).json({
       reply: ai.reply,
       intent: ai.intent,
+      stage, // 🔥 IMPORTANTE PARA FRONT
       score,
       converted,
       source: ai.source
     });
 
   } catch (err) {
-    console.error("ERROR:", err);
+    console.error("ERROR processMessage:", err);
 
     return res.status(500).json({
       error: err.message
