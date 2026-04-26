@@ -4,53 +4,60 @@ import { createClient } from "@supabase/supabase-js";
 
 export default async function handler(req, res) {
   try {
-    // 🔹 Validación básica
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Method not allowed" });
     }
 
-    const { customerMessage, phone, name, businessType = "general" } = req.body;
+    const {
+      customerMessage,
+      phone,
+      name,
+      businessType = "general",
+      conversation = ""
+    } = req.body;
 
     if (!customerMessage) {
-      return res.status(400).json({ error: "Falta customerMessage" });
+      return res.status(400).json({ error: "Falta mensaje" });
     }
 
-    // 🔹 Supabase (instancia segura para Vercel)
+    // 🔹 Supabase
     const supabase = createClient(
       process.env.SUPABASE_URL,
       process.env.SUPABASE_ANON_KEY
     );
 
-    // 🔹 1. IA / fallback
+    // 🔹 IA
     const ai = await getAIAnalysis({
       message: "",
       customerMessage,
-      businessType
+      businessType,
+      conversation
     });
 
-    // 🔹 2. Score
+    // 🔹 Score
     const score = scoreLead(ai.intent, ai.urgency);
 
-    // 🔹 3. Detectar conversión
-    const conversionKeywords = ["compro", "quiero", "dale", "ok", "listo"];
-    const converted = conversionKeywords.some(k =>
-      customerMessage.toLowerCase().includes(k)
-    );
+    // 🔹 Conversión
+    const converted = ["compro", "quiero", "dale", "ok", "listo"]
+      .some(k => customerMessage.toLowerCase().includes(k));
 
-    // 🔹 4. Guardar / actualizar lead
+    // 🔹 Upsert lead (sin duplicados)
     if (phone) {
-      await supabase.from("leads").insert([
-        {
-          phone,
-          name: name || "Sin nombre",
-          intent: ai.intent,
-          score,
-          last_message: customerMessage
-        }
-      ]);
+      await supabase
+        .from("leads")
+        .upsert([
+          {
+            phone,
+            name: name || "Sin nombre",
+            intent: ai.intent,
+            score,
+            last_message: customerMessage,
+            businessType
+          }
+        ], { onConflict: "phone" });
     }
 
-    // 🔹 5. Log mensaje (historial)
+    // 🔹 Log mensaje
     await supabase.from("messages").insert([
       {
         phone: phone || "unknown",
@@ -58,28 +65,28 @@ export default async function handler(req, res) {
         reply: ai.reply,
         intent: ai.intent,
         source: ai.source,
-        converted
+        converted,
+        businessType
       }
     ]);
 
-    // 🔹 6. Métrica simple
+    // 🔹 Métrica
     await supabase.from("metrics").insert([
       {
-        event: converted ? "conversion" : "message",
+        event: converted ? "conversion" : "message"
       }
     ]);
 
-    // 🔹 Respuesta final
     return res.status(200).json({
       reply: ai.reply,
       intent: ai.intent,
       score,
       converted,
-      source: ai.source || "fallback"
+      source: ai.source
     });
 
   } catch (err) {
-    console.error("PROCESS MESSAGE ERROR:", err);
+    console.error("ERROR:", err);
 
     return res.status(500).json({
       error: err.message
