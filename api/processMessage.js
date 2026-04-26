@@ -11,6 +11,14 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
+// 💰 Revenue estimado simple (base SaaS)
+function estimateRevenue(intent, score) {
+  if (intent === "compra") return 100;
+  if (intent === "interes" && score > 70) return 40;
+  if (intent === "interes") return 20;
+  return 0;
+}
+
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") {
@@ -57,14 +65,23 @@ export default async function handler(req, res) {
     // 🔥 Stage seguro
     const stage = ai.stage || "NEW";
 
-    // 🔹 Conversión
+    // 🔥 CONVERSIÓN
     const converted = ["compro", "quiero", "dale", "ok", "listo"].some(k =>
       customerMessage.toLowerCase().includes(k)
     );
 
     const timestamp = new Date().toISOString();
 
-    // 🔥 UPSERT LEADS
+    // 💰 REVENUE ESTIMADO
+    const revenue = estimateRevenue(ai.intent, score);
+
+    // 🔥 LEAD CALIENTE
+    const isHot = score >= 80 || ai.intent === "compra";
+
+    // 🔥 BUSINESS ID (multi-tenant SaaS base)
+    const business_id = businessType;
+
+    // 🔥 UPSERT LEADS (CRM principal)
     if (phone) {
       const { error: leadError } = await supabase.from("leads").upsert(
         [
@@ -75,6 +92,9 @@ export default async function handler(req, res) {
             score,
             last_message: customerMessage,
             businessType,
+            business_id,
+            revenue,
+            is_hot: isHot,
             updated_at: timestamp
           }
         ],
@@ -86,7 +106,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // 🔥 LOG MESSAGES
+    // 🔥 LOG MESSAGES (dashboard + analytics)
     const { error: msgError } = await supabase.from("messages").insert([
       {
         phone: phone || "unknown",
@@ -94,9 +114,12 @@ export default async function handler(req, res) {
         reply: ai.reply,
         intent: ai.intent,
         stage,
+        score,
         source: ai.source,
         converted,
         businessType,
+        business_id,
+        revenue_estimate: revenue,
         created_at: timestamp
       }
     ]);
@@ -105,11 +128,12 @@ export default async function handler(req, res) {
       console.log("MESSAGE ERROR:", msgError.message);
     }
 
-    // 🔥 METRICS
+    // 🔥 METRICS (embudo + conversion tracking)
     const { error: metricError } = await supabase.from("metrics").insert([
       {
         event: converted ? "conversion" : "message",
         businessType,
+        business_id,
         created_at: timestamp
       }
     ]);
@@ -118,13 +142,16 @@ export default async function handler(req, res) {
       console.log("METRICS ERROR:", metricError.message);
     }
 
-    // 🔥 RESPONSE FINAL
+    // 🔥 RESPONSE FINAL (frontend + WhatsApp ready)
     return res.status(200).json({
       reply: ai.reply,
       intent: ai.intent,
       stage,
       score,
       converted,
+      revenue,
+      isHot,
+      businessType,
       source: ai.source
     });
 
