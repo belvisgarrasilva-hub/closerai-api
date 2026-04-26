@@ -1,8 +1,11 @@
-import { getAIAnalysis } from "../lib/openai.js";
+import * as openaiModule from "../lib/openai.js";
 import { scoreLead } from "../lib/scoring.js";
 import { createClient } from "@supabase/supabase-js";
 
-// 🔥 CLIENTE GLOBAL (mejor performance en Vercel)
+// 🔥 FIX ESM SAFE IMPORT
+const { getAIAnalysis } = openaiModule;
+
+// 🔥 CLIENTE GLOBAL (Vercel optimized)
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
@@ -20,55 +23,77 @@ export default async function handler(req, res) {
       name,
       businessType = "general",
       conversation = ""
-    } = req.body;
+    } = req.body || {};
 
     if (!customerMessage) {
       return res.status(400).json({ error: "Falta mensaje" });
     }
 
-    // 🔹 IA / fallback
-    const ai = await getAIAnalysis({
-      message: "",
-      customerMessage,
-      businessType,
-      conversation
-    });
+    // 🔥 IA + fallback seguro
+    let ai;
+
+    try {
+      ai = await getAIAnalysis({
+        message: "",
+        customerMessage,
+        businessType,
+        conversation
+      });
+    } catch (err) {
+      console.log("AI ERROR FALLBACK:", err.message);
+
+      ai = {
+        intent: "frio",
+        urgency: 30,
+        reply: "Hola 👋 ¿en qué puedo ayudarte?",
+        stage: "NEW",
+        source: "fallback-safe"
+      };
+    }
 
     // 🔹 Score
     const score = scoreLead(ai.intent, ai.urgency);
 
-    // 🔥 NUEVO: STAGE (embudo de ventas)
+    // 🔥 Stage seguro
     const stage = ai.stage || "NEW";
 
-    // 🔹 Conversión real
-    const converted = ["compro", "quiero", "dale", "ok", "listo"]
-      .some(k => customerMessage.toLowerCase().includes(k));
+    // 🔹 Conversión
+    const converted = ["compro", "quiero", "dale", "ok", "listo"].some(k =>
+      customerMessage.toLowerCase().includes(k)
+    );
 
     const timestamp = new Date().toISOString();
 
-    // 🔹 Upsert lead (CRM base)
+    // 🔥 UPSERT LEADS
     if (phone) {
-      await supabase.from("leads").upsert([
-        {
-          phone,
-          name: name || "Sin nombre",
-          intent: ai.intent,
-          score,
-          last_message: customerMessage,
-          businessType,
-          updated_at: timestamp
-        }
-      ], { onConflict: "phone" });
+      const { error: leadError } = await supabase.from("leads").upsert(
+        [
+          {
+            phone,
+            name: name || "Sin nombre",
+            intent: ai.intent,
+            score,
+            last_message: customerMessage,
+            businessType,
+            updated_at: timestamp
+          }
+        ],
+        { onConflict: "phone" }
+      );
+
+      if (leadError) {
+        console.log("LEAD ERROR:", leadError.message);
+      }
     }
 
-    // 🔹 Log mensaje (FUNDAMENTAL PARA DASHBOARD)
-    await supabase.from("messages").insert([
+    // 🔥 LOG MESSAGES
+    const { error: msgError } = await supabase.from("messages").insert([
       {
         phone: phone || "unknown",
         message: customerMessage,
         reply: ai.reply,
         intent: ai.intent,
-        stage, // 🔥 NUEVO
+        stage,
         source: ai.source,
         converted,
         businessType,
@@ -76,8 +101,12 @@ export default async function handler(req, res) {
       }
     ]);
 
-    // 🔹 Métricas (embudo + ventas)
-    await supabase.from("metrics").insert([
+    if (msgError) {
+      console.log("MESSAGE ERROR:", msgError.message);
+    }
+
+    // 🔥 METRICS
+    const { error: metricError } = await supabase.from("metrics").insert([
       {
         event: converted ? "conversion" : "message",
         businessType,
@@ -85,17 +114,22 @@ export default async function handler(req, res) {
       }
     ]);
 
+    if (metricError) {
+      console.log("METRICS ERROR:", metricError.message);
+    }
+
+    // 🔥 RESPONSE FINAL
     return res.status(200).json({
       reply: ai.reply,
       intent: ai.intent,
-      stage, // 🔥 IMPORTANTE PARA FRONT
+      stage,
       score,
       converted,
       source: ai.source
     });
 
   } catch (err) {
-    console.error("ERROR processMessage:", err);
+    console.error("CRITICAL ERROR processMessage:", err);
 
     return res.status(500).json({
       error: err.message
